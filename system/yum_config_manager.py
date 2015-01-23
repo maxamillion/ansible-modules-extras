@@ -55,6 +55,8 @@ yum_config_manager: state=enabled name=epel-testing
 yum_config_manager: state=present repofile="http://example.com/repos/myyumrepo.repo"
 '''
 
+import os
+
 ycm = '/usr/bin/yum-config-manager'
 
 def main():
@@ -78,6 +80,10 @@ def main():
         supports_check_mode=False
     )
 
+    if not os.path.exists(ycm):
+        module.fail_json(
+            msg="yum-config-manager not found at path %s" % ycm
+        )
 
 
     if module.params['state'] in ('enabled', 'disabled'):
