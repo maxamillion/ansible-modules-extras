@@ -109,19 +109,19 @@ def main():
     if rc != 0:
         module.fail_json(
             msg="rc of commmand is non-zero",
-            cmd=args,
+            cmd=cmd,
             stdout=out,
             stderr=err,
             rc=rc,
-            changed=True,
+            changed=False,
         )
     else:
         # If rc was non-zero, it would have failed
         module.exit_json(
-            cmd=args,
-            stdout=run_result['stdout'].rstrip("\r\n"),
-            stderr=run_result['stderr'].rstrip("\r\n"),
-            rc=run_result['rc'],
+            cmd=cmd,
+            stdout=out,
+            stderr=err,
+            rc=rc,
             changed=True,
         )
 
