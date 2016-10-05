@@ -453,6 +453,7 @@ def main():
     if module.params['immediate'] and module.params['offline']:
         module.fail(msg='immediate and offline are mutually exclusive, need running firewalld for immediate')
 
+
     ## Global Vars
     changed=False
     msgs = []
