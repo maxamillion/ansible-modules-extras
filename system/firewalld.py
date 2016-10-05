@@ -455,6 +455,7 @@ def main():
     if module.params['immediate'] and fw_offiline:
         module.fail(msg='firewall is not currently running, unable to perform immediate actions without a running firewall daemon')
 
+
     ## Global Vars
     changed=False
     msgs = []
