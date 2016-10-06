@@ -375,6 +375,7 @@ def main():
             timeout=dict(type='int',required=False,default=0),
             interface=dict(required=False,default=None),
             masquerade=dict(required=False,default=None),
+            offline=dict(type='bool',required=False,default=None),
         ),
         supports_check_mode=True
     )
