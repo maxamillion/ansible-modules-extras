@@ -453,7 +453,6 @@ def main():
     if module.params['immediate'] and module.params['offline']:
         module.fail(msg='immediate and offline are mutually exclusive, need running firewalld for immediate')
 
-
     ## Global Vars
     changed=False
     msgs = []
@@ -499,7 +498,35 @@ def main():
         module.fail_json(msg='can only operate on port, service, rich_rule or interface at once')
 
     if service != None:
-        if permanent:
+        if immediate and permanent:
+            is_enabled_permanent = get_service_enabled_permanent(zone, service)
+            is_enabled_immediate = get_service_enabled(zone, service)
+            msgs.append('Permanent and Non-Permanent(immediate) operation')
+
+            if desired_state == "enabled":
+                if not is_enabled_permanent or not is_enabled_immediate:
+                    if module.check_mode:
+                        module.exit_json(changed=True)
+                if not is_enabled_permanent:
+                    set_service_enabled_permanent(zone, service)
+                    changed=True
+                if not is_enabled_immediate:
+                    set_service_enabled(zone, service, timeout)
+                    changed=True
+
+
+            elif desired_state == "disabled":
+                if is_enabled_permanent or is_enabled_immediate:
+                    if module.check_mode:
+                        module.exit_json(changed=True)
+                if is_enabled_permanent:
+                    set_service_disabled_permanent(zone, service)
+                    changed=True
+                if is_enabled_immediate:
+                    set_service_disabled(zone, service)
+                    changed=True
+
+        elif permanent and not immediate:
             is_enabled = get_service_enabled_permanent(zone, service)
             msgs.append('Permanent operation')
 
@@ -517,7 +544,7 @@ def main():
 
                     set_service_disabled_permanent(zone, service)
                     changed=True
-        if immediate or not permanent:
+        elif immediate and not permanent:
             is_enabled = get_service_enabled(zone, service)
             msgs.append('Non-permanent operation')
 
@@ -540,6 +567,8 @@ def main():
         if changed == True:
             msgs.append("Changed service %s to %s" % (service, desired_state))
 
+    # FIXME - source type does not handle non-permanent mode, this was an
+    #         oversight in the past.
     if source != None:
         is_enabled = get_source(zone, source)
         if desired_state == "enabled":
@@ -560,7 +589,40 @@ def main():
                 msgs.append("Removed %s from zone %s" % (source, zone))
 
     if port != None:
-        if permanent:
+        if immediate and permanent:
+            is_enabled_permanent = get_port_enabled_permanent(
+                zone,
+                [port, protocol],
+            )
+            is_enabled_immediate = get_port_enabled(
+                zone,
+                [port, protocol],
+            )
+            msgs.append('Permanent and Non-Permanent(immediate) operation')
+
+            if desired_state == "enabled":
+                if not is_enabled_permanent or not is_enabled_immediate:
+                    if module.check_mode:
+                        module.exit_json(changed=True)
+                if not is_enabled_permanent:
+                    set_port_enabled_permanent(zone, port, protocol)
+                    changed=True
+                if not is_enabled_immediate:
+                    set_port_enabled(zone, port, protocol, timeout)
+                    changed=True
+
+            elif desired_state == "disabled":
+                if is_enabled_permanent or is_enabled_immediate:
+                    if module.check_mode:
+                        module.exit_json(changed=True)
+                if is_enabled_permanent:
+                    set_port_disabled_permanent(zone, port, protocol)
+                    changed=True
+                if is_enabled_immediate:
+                    set_port_disabled(zone, port, protocol)
+                    changed=True
+
+        elif permanent and not immediate:
             is_enabled = get_port_enabled_permanent(zone, [port, protocol])
             msgs.append('Permanent operation')
 
@@ -578,7 +640,7 @@ def main():
 
                     set_port_disabled_permanent(zone, port, protocol)
                     changed=True
-        if immediate or not permanent:
+        if immediate and not permanent:
             is_enabled = get_port_enabled(zone, [port,protocol])
             msgs.append('Non-permanent operation')
 
@@ -602,7 +664,33 @@ def main():
                         desired_state))
 
     if rich_rule != None:
-        if permanent:
+        if immediate and permanent:
+            is_enabled_permanent = get_rich_rule_enabled_permanent(zone, rich_rule)
+            is_enabled_immediate = get_rich_rule_enabled(zone, rich_rule)
+            msgs.append('Permanent and Non-Permanent(immediate) operation')
+
+            if desired_state == "enabled":
+                if not is_enabled_permanent or not is_enabled_immediate:
+                    if module.check_mode:
+                        module.exit_json(changed=True)
+                if not is_enabled_permanent:
+                    set_rich_rule_enabled_permanent(zone, rich_rule)
+                    changed=True
+                if not is_enabled_immediate:
+                    set_rich_rule_enabled(zone, rich_rule, timeout)
+                    changed=True
+
+            elif desired_state == "disabled":
+                if is_enabled_permanent or is_enabled_immediate:
+                    if module.check_mode:
+                        module.exit_json(changed=True)
+                if is_enabled_permanent:
+                    set_rich_rule_disabled_permanent(zone, rich_rule)
+                    changed=True
+                if is_enabled_immediate:
+                    set_rich_rule_disabled(zone, rich_rule)
+                    changed=True
+        if permanent and not immediate:
             is_enabled = get_rich_rule_enabled_permanent(zone, rich_rule)
             msgs.append('Permanent operation')
 
@@ -620,7 +708,7 @@ def main():
 
                     set_rich_rule_disabled_permanent(zone, rich_rule)
                     changed=True
-        if immediate or not permanent:
+        if immediate and not permanent:
             is_enabled = get_rich_rule_enabled(zone, rich_rule)
             msgs.append('Non-permanent operation')
 
@@ -643,7 +731,38 @@ def main():
             msgs.append("Changed rich_rule %s to %s" % (rich_rule, desired_state))
 
     if interface != None:
-        if permanent:
+        if immediate and permanent:
+            is_enabled_permanent = get_interface_permanent(zone, interface)
+            is_enabled_immediate = get_interface(zone, interface)
+            msgs.append('Permanent and Non-Permanent(immediate) operation')
+
+            if desired_state == "enabled":
+                if not is_enabled_permanent or not is_enabled_immediate:
+                    if module.check_mode:
+                        module.exit_json(changed=True)
+                if not is_enabled_permanent:
+                    change_zone_of_interface_permanent(zone, interface)
+                    changed=True
+                if not is_enabled_immediate:
+                    change_zone_of_interface(zone, interface)
+                    changed=True
+                if changed:
+                    msgs.append("Changed %s to zone %s" % (interface, zone))
+
+            elif desired_state == "disabled":
+                if is_enabled_permanent or is_enabled_immediate:
+                    if module.check_mode:
+                        module.exit_json(changed=True)
+                if is_enabled_permanent:
+                    remove_interface_permanent(zone, interface)
+                    changed=True
+                if is_enabled_immediate:
+                    remove_interface(zone, interface)
+                    changed=True
+                if changed:
+                    msgs.append("Removed %s from zone %s" % (interface, zone))
+
+        elif permanent and not immediate:
             is_enabled = get_interface_permanent(zone, interface)
             msgs.append('Permanent operation')
             if desired_state == "enabled":
@@ -662,7 +781,7 @@ def main():
                     remove_interface_permanent(zone, interface)
                     changed=True
                     msgs.append("Removed %s from zone %s" % (interface, zone))
-        if immediate or not permanent:
+        elif immediate and not permanent:
             is_enabled = get_interface(zone, interface)
             msgs.append('Non-permanent operation')
             if desired_state == "enabled":
@@ -684,7 +803,38 @@ def main():
 
     if masquerade != None:
 
-        if permanent:
+        if immediate and permanent:
+            is_enabled_permanent = get_masquerade_enabled_permanent(zone)
+            is_enabled_immediate = get_masquerade_enabled(zone)
+            msgs.append('Permanent and Non-Permanent(immediate) operation')
+
+            if desired_state == "enabled":
+                if not is_enabled_permanent or not is_enabled_immediate:
+                    if module.check_mode:
+                        module.exit_json(changed=True)
+                if not is_enabled_permanent:
+                    set_masquerade_permanent(zone, True)
+                    changed=True
+                if not is_enabled_immediate:
+                    set_masquerade_enabled(zone)
+                    changed=True
+                if changed:
+                    msgs.append("Added masquerade to zone %s" % (zone))
+
+            elif desired_state == "disabled":
+                if is_enabled_permanent or is_enabled_immediate:
+                    if module.check_mode:
+                        module.exit_json(changed=True)
+                if is_enabled_permanent:
+                    set_masquerade_permanent(zone, False)
+                    changed=True
+                if is_enabled_immediate:
+                    set_masquerade_disabled(zone)
+                    changed=True
+                if changed:
+                    msgs.append("Removed masquerade from zone %s" % (zone))
+
+        elif permanent and not immediate:
             is_enabled = get_masquerade_enabled_permanent(zone)
             msgs.append('Permanent operation')
 
@@ -704,7 +854,7 @@ def main():
                     set_masquerade_permanent(zone, False)
                     changed=True
                     msgs.append("Removed masquerade from zone %s" % (zone))
-        if immediate or not permanent:
+        elif immediate and not permanent:
             is_enabled = get_masquerade_enabled(zone)
             msgs.append('Non-permanent operation')
 
