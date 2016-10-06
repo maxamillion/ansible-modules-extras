@@ -86,12 +86,6 @@ options:
     required: false
     default: null
     version_added: "2.1"
-  offline:
-    description:
-     - "Operating on a firewalld configs for a firewalld service that is currently not running (offline), implies permanent=true. (Requires firewalld >= 0.3.9"
-    required: false
-    default: None
-    version_added: "2.3"
 notes:
   - Not tested on any Debian based system.
   - Requires the python2 bindings of firewalld, which may not be installed by default if the distribution switched to python 3
@@ -101,9 +95,7 @@ author: "Adam Miller (@maxamillion)"
 
 EXAMPLES = '''
 - firewalld: service=https permanent=true state=enabled
-- firewalld: service=https permanent=true state=enabled offline=true
 - firewalld: port=8081/tcp permanent=true state=disabled
-- firewalld: port=8081/tcp permanent=true state=disabled offline=true
 - firewalld: port=161-162/udp permanent=true state=enabled
 - firewalld: zone=dmz service=http permanent=true state=enabled
 - firewalld: rich_rule='rule service name="ftp" audit limit value="1/m" accept' permanent=true state=enabled
@@ -383,7 +375,6 @@ def main():
             timeout=dict(type='int',required=False,default=0),
             interface=dict(required=False,default=None),
             masquerade=dict(required=False,default=None),
-            offline=dict(type='bool',required=False,default=None),
         ),
         supports_check_mode=True
     )
