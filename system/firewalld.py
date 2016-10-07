@@ -108,17 +108,199 @@ from ansible.module_utils.basic import AnsibleModule
 
 import sys
 
-
 #####################
 # Globals
 #
 fw = None
+msgs = None
 module = None
-fw_offline = False
+changed = False
+immediate = None
+permanent = None
 Rich_Rule = None
+fw_offline = False
+desired_state = None
 FirewallClientZoneSettings = None
 
 module = None
+
+
+#####################
+# action logic
+#
+def action_runner(
+    action,
+    get_enabled_immediate, get_enabled_immediate_args,
+    get_enabled_permanent, get_enabled_permanent_args,
+    set_enabled_immediate, set_enabled_immediate_args,
+    set_enabled_permanent, set_enabled_permanent_args,
+    set_disabled_immediate, set_disabled_immediate_args,
+    set_disabled_permanent, set_disabled_permanent_args
+    ):
+    """
+    action_runner
+
+    This fuction contains the "transaction logic" where as all operations
+    follow a similar pattern in order to perform their action but simply
+    call different functions to carry that action out.
+
+    :param action: str, string of the type of firewalld module action this is (example: service, port, etc)
+    :param get_enabled_immediate: func, getter function for immediate actions
+    :param get_enabled_immediate_args: tuple, args for get_enabled_immediate function
+    :param get_enabled_permanent: func, getter function for permanent actions
+    :param get_enabled_permanent_args: tuple, args for get_enabled_permanent function
+    :param set_enabled_immediate: func, setter function for immediate actions
+    :param set_enabled_immediate_args: tuple, args for set_enabled_immediate function
+    :param set_enabled_permanent: func, getter function for permanent actions
+    :param set_enabled_permanent_args: tuple, args for get_enabled_permanent function
+    :param set_disabled_immediate: func, setter function for immediate actions
+    :param set_disabled_immediate_args: tuple, args for set_enabled_immediate function
+    :param set_disabled_permanent: func, getter function for permanent actions
+    :param set_disabled_permanent_args: tuple, args for get_enabled_permanent function
+
+    """
+    global msgs
+    global immediate
+    global permanent
+    global changed
+    global desired_state
+    global permanent
+    global immediate
+
+    ## These are actions that modify msgs during the transaction for more
+    ## verbose output to the user.
+    custom_msg_actions = [
+        'interface',
+        'masquerade',
+        'source',
+    ]
+    if action == 'interface':
+        msgs_tuple = tuple(reversed(set_enabled_permanent_args))
+        enabled_msg = "Changed %s to zone %s" % msgs_tuple
+        disable_msg = "Removed %s from zone %s" % msgs_tuple
+    elif action == 'masquerade':
+        msgs_tuple = set_enabled_immediate_args
+        enabled_msg = "Added masquerade to zone %s" % msgs_tuple
+        disable_msg = "Removed masquerade from zone %s" % msgs_tuple
+    elif action == 'source':
+        msgs_tuple = tuple(reversed(set_enabled_permanent_args))
+        enabled_msg = "Added %s to zone %s" % msgs_tuple
+        disable_msg = "Removed %s from zone %s" % msgs_tuple
+
+    if immediate and permanent:
+        is_enabled_permanent = action_handler(
+            get_enabled_permanent,
+            get_enabled_permanent_args
+        )
+        is_enabled_immediate = action_handler(
+            get_enabled_immediate,
+            get_enabled_immediate_args
+        )
+        msgs.append('Permanent and Non-Permanent(immediate) operation')
+
+        if desired_state == "enabled":
+            if not is_enabled_permanent or not is_enabled_immediate:
+                if module.check_mode:
+                    module.exit_json(changed=True)
+            if not is_enabled_permanent:
+                action_handler(
+                    set_enabled_permanent,
+                    set_enabled_permanent_args
+                )
+                changed=True
+            if not is_enabled_immediate:
+                action_handler(
+                    set_enabled_immediate,
+                    set_enabled_immediate_args
+                )
+                changed=True
+            if changed and (action in custom_msg_actions):
+                msgs.append(enabled_msg)
+
+        elif desired_state == "disabled":
+            if is_enabled_permanent or is_enabled_immediate:
+                if module.check_mode:
+                    module.exit_json(changed=True)
+            if is_enabled_permanent:
+                action_handler(
+                    set_disabled_permanent,
+                    set_disabled_permanent_args
+                )
+                changed=True
+            if is_enabled_immediate:
+                action_handler(
+                    set_disabled_immediate,
+                    set_disabled_immediate_args
+                )
+                changed=True
+            if changed and (action in custom_msg_actions):
+                msgs.append(disable_msg)
+
+    elif permanent and not immediate:
+        is_enabled = action_handler(
+            get_enabled_permanent,
+            get_enabled_permanent_args
+        )
+        msgs.append('Permanent operation')
+
+        if desired_state == "enabled":
+            if not is_enabled:
+                if module.check_mode:
+                    module.exit_json(changed=True)
+
+                action_handler(
+                    set_enabled_permanent,
+                    set_enabled_permanent_args
+                )
+                changed=True
+            if changed and (action in custom_msg_actions):
+                msgs.append(enabled_msg)
+
+        elif desired_state == "disabled":
+            if is_enabled:
+                if module.check_mode:
+                    module.exit_json(changed=True)
+
+                action_handler(
+                    set_disabled_permanent,
+                    set_disabled_permanent_args
+                )
+                changed=True
+            if changed and (action in custom_msg_actions):
+                msgs.append(disable_msg)
+
+    elif immediate and not permanent:
+        is_enabled = action_handler(
+            get_enabled_immediate,
+            get_enabled_immediate_args
+        )
+        msgs.append('Non-permanent operation')
+
+        if desired_state == "enabled":
+            if not is_enabled:
+                if module.check_mode:
+                    module.exit_json(changed=True)
+
+                action_handler(
+                    set_enabled_immediate,
+                    set_enabled_immediate_args
+                )
+                changed=True
+            if changed and (action in custom_msg_actions):
+                msgs.append(enabled_msg)
+
+        elif desired_state == "disabled":
+            if is_enabled:
+                if module.check_mode:
+                    module.exit_json(changed=True)
+
+                action_handler(
+                    set_disabled_immediate,
+                    set_disabled_immediate_args
+                )
+                changed=True
+            if changed and (action in custom_msg_actions):
+                msgs.append(disable_msg)
 
 
 #####################
@@ -130,22 +312,33 @@ def action_handler(action_func, action_func_args):
     logic and emit (hopefully) useful error messages
     """
 
-    msgs = []
+    global module
+
+    ah_msgs = []
 
     try:
-        return action_func(*action_func_args)
-    except Exception:
-        # Make python 2.4 shippable ci tests happy
-        e = sys.exc_info()[1]
+        if type(action_func_args) is tuple:
+            return action_func(*action_func_args)
+        else:
+            return action_func(action_func_args)
+    except Exception as e:
 
         # If there are any commonly known errors that we should provide more
         # context for to help the users diagnose what's wrong. Handle that here
         if "INVALID_SERVICE" in "%s" % e:
-            msgs.append("Services are defined by port/tcp relationship and named as they are in /etc/services (on most systems)")
+            ah_msgs.append("Services are defined by port/tcp relationship and named as they are in /etc/services (on most systems)")
 
-        if len(msgs) > 0:
+        # If ZONE_ALREADY_SET then no change occured
+        #
+        if "ZONE_ALREADY_SET" in "%s" % e:
+            module.exit_json(
+                changed=False,
+                msg="Zone setting already set, no change made: %s" % e
+            )
+
+        if len(ah_msgs) > 0:
             module.fail_json(
-                msg='ERROR: Exception caught: %s %s' % (e, ', '.join(msgs))
+                msg='ERROR: Exception caught: %s. %s' % (e, ', '.join(ah_msgs))
             )
         else:
             module.fail_json(msg='ERROR: Exception caught: %s' % e)
@@ -241,18 +434,30 @@ def set_port_disabled_permanent(zone, port, protocol):
 # source handling
 #
 def get_source(zone, source):
+    if source in fw.getSources(zone):
+        return True
+    else:
+        return False
+
+def get_source_permanent(zone, source):
     fw_zone, fw_settings = get_fw_zone_settings(zone)
     if source in fw_settings.getSources():
-       return True
+        return True
     else:
         return False
 
 def add_source(zone, source):
+    fw.addSource(zone, source)
+
+def add_source_permanent(zone, source):
     fw_zone, fw_settings = get_fw_zone_settings(zone)
     fw_settings.addSource(source)
     update_fw_settings(fw_zone, fw_settings)
 
 def remove_source(zone, source):
+    fw.removeSource(zone, source)
+
+def remove_source_permanent(zone, source):
     fw_zone, fw_settings = get_fw_zone_settings(zone)
     fw_settings.removeSource(source)
     update_fw_settings(fw_zone, fw_settings)
@@ -337,12 +542,6 @@ def get_service_enabled(zone, service):
     else:
         return False
 
-def set_service_enabled(zone, service, timeout):
-    fw.addService(zone, service, timeout)
-
-def set_service_disabled(zone, service):
-    fw.removeService(zone, service)
-
 def get_service_enabled_permanent(zone, service):
     fw_zone, fw_settings = get_fw_zone_settings(zone)
 
@@ -350,6 +549,12 @@ def get_service_enabled_permanent(zone, service):
         return True
     else:
         return False
+
+def set_service_enabled(zone, service, timeout):
+    fw.addService(zone, service, timeout)
+
+def set_service_disabled(zone, service):
+    fw.removeService(zone, service)
 
 def set_service_enabled_permanent(zone, service):
     fw_zone, fw_settings = get_fw_zone_settings(zone)
@@ -402,6 +607,25 @@ def set_rich_rule_disabled_permanent(zone, rule):
 def main():
     global module
 
+    ## Global Vars
+    ## Handle running (online) daemon vs non-running (offline) daemon
+    global fw
+    global fw_offline
+    global Rich_Rule
+    global FirewallClientZoneSettings
+
+
+    ## Allow for action_runner to not need these three always passed in
+    global msgs
+    global immediate
+    global permanent
+    global changed
+    global desired_state
+    global permanent
+    global immediate
+    changed=False
+    msgs = []
+
     ## make module global so we don't have to pass it to action_handler every
     ## function call
     global module
@@ -413,7 +637,7 @@ def main():
             zone=dict(required=False,default=None),
             immediate=dict(type='bool',default=False),
             source=dict(required=False,default=None),
-            permanent=dict(type='bool',required=False,default=None),
+            permanent=dict(type='bool',required=False,default=False),
             state=dict(choices=['enabled', 'disabled'], required=True),
             timeout=dict(type='int',required=False,default=0),
             interface=dict(required=False,default=None),
@@ -423,11 +647,6 @@ def main():
         supports_check_mode=True
     )
 
-    ## Handle running (online) daemon vs non-running (offline) daemon
-    global fw
-    global fw_offline
-    global Rich_Rule
-    global FirewallClientZoneSettings
 
     ## Imports
     try:
@@ -455,9 +674,7 @@ def main():
             fw.start()
             fw_offline = True
 
-    except ImportError:
-        ## Make python 2.4 shippable ci tests happy
-        e = sys.exc_info()[1]
+    except ImportError as e:
         module.fail_json(msg='firewalld and its python 2 module are required for this module, version 2.0.11 or newer required (3.0.9 or newer for offline operations) \n %s' % e)
 
     if fw_offline:
@@ -477,20 +694,21 @@ def main():
             module.fail_json(msg="firewalld connection can't be established,\
                     installed version (%s) likely too old. Requires firewalld >= 2.0.11" % FW_VERSION)
 
+    ## Handle common expectations
+    ## (if nothing specified, it's an immediate-only action)
+    if not module.params['permanent'] and not module.params['immediate']:
+        immediate = True
+    else:
+        immediate = module.params['immediate']
 
     ## Verify required params are provided
-    if module.params['source'] == None and module.params['permanent'] == None:
-        module.fail_json(msg='permanent is a required parameter')
-
     if module.params['interface'] != None and module.params['zone'] == None:
-        module.fail(msg='zone is a required parameter')
+        module.fail_json(msg='zone is a required parameter')
 
     if module.params['immediate'] and fw_offline:
-        module.fail(msg='firewall is not currently running, unable to perform immediate actions without a running firewall daemon')
+        module.fail_json(msg='firewall is not currently running, unable to perform immediate actions without a running firewall daemon')
 
-    ## Global Vars
-    changed=False
-    msgs = []
+
     service = module.params['service']
     rich_rule = module.params['rich_rule']
     source = module.params['source']
@@ -512,7 +730,6 @@ def main():
 
     permanent = module.params['permanent']
     desired_state = module.params['state']
-    immediate = module.params['immediate']
     timeout = module.params['timeout']
     interface = module.params['interface']
     masquerade = module.params['masquerade']
@@ -533,502 +750,80 @@ def main():
         module.fail_json(msg='can only operate on port, service, rich_rule or interface at once')
 
     if service != None:
-        if immediate and permanent:
-            is_enabled_permanent = action_handler(
-                get_service_enabled_permanent,
-                (zone, service)
-            )
-            is_enabled_immediate = action_handler(
-                get_service_enabled,
-                (zone, service)
-            )
-            msgs.append('Permanent and Non-Permanent(immediate) operation')
-
-            if desired_state == "enabled":
-                if not is_enabled_permanent or not is_enabled_immediate:
-                    if module.check_mode:
-                        module.exit_json(changed=True)
-                if not is_enabled_permanent:
-                    action_handler(
-                        set_service_enabled_permanent,
-                        (zone, service)
-                    )
-                    changed=True
-                if not is_enabled_immediate:
-                    action_handler(
-                        set_service_enabled,
-                        (zone, service, timeout)
-                    )
-                    changed=True
-
-
-            elif desired_state == "disabled":
-                if is_enabled_permanent or is_enabled_immediate:
-                    if module.check_mode:
-                        module.exit_json(changed=True)
-                if is_enabled_permanent:
-                    action_handler(
-                        set_service_disabled_permanent,
-                        (zone, service)
-                    )
-                    changed=True
-                if is_enabled_immediate:
-                    action_handler(
-                        set_service_disabled,
-                        (zone, service)
-                    )
-                    changed=True
-
-        elif permanent and not immediate:
-            is_enabled = action_handler(
-                get_service_enabled_permanent,
-                (zone, service)
-            )
-            msgs.append('Permanent operation')
-
-            if desired_state == "enabled":
-                if is_enabled == False:
-                    if module.check_mode:
-                        module.exit_json(changed=True)
-
-                    action_handler(
-                        set_service_enabled_permanent,
-                        (zone, service)
-                    )
-                    changed=True
-            elif desired_state == "disabled":
-                if is_enabled == True:
-                    if module.check_mode:
-                        module.exit_json(changed=True)
-
-                    action_handler(
-                        set_service_disabled_permanent,
-                        (zone, service)
-                    )
-                    changed=True
-        elif immediate and not permanent:
-            is_enabled = action_handler(
-                get_service_enabled,
-                (zone, service)
-            )
-            msgs.append('Non-permanent operation')
-
-
-            if desired_state == "enabled":
-                if is_enabled == False:
-                    if module.check_mode:
-                        module.exit_json(changed=True)
-
-                    action_handler(
-                        set_service_enabled,
-                        (zone, service, timeout)
-                    )
-                    changed=True
-            elif desired_state == "disabled":
-                if is_enabled == True:
-                    if module.check_mode:
-                        module.exit_json(changed=True)
-
-                    action_handler(
-                        set_service_disabled,
-                        (zone, service)
-                    )
-                    changed=True
-
+        action_runner(
+            "service",
+            get_service_enabled, (zone, service),
+            get_service_enabled_permanent, (zone, service),
+            set_service_enabled, (zone, service, timeout),
+            set_service_enabled_permanent, (zone, service),
+            set_service_disabled, (zone, service),
+            set_service_disabled_permanent, (zone, service)
+        )
         if changed == True:
             msgs.append("Changed service %s to %s" % (service, desired_state))
 
-    # FIXME - source type does not handle non-permanent mode, this was an
-    #         oversight in the past.
     if source != None:
-        is_enabled = action_handler(get_source, (zone, source))
-        if desired_state == "enabled":
-            if is_enabled == False:
-                if module.check_mode:
-                    module.exit_json(changed=True)
-
-                action_handler(add_source, (zone, source))
-                changed=True
-                msgs.append("Added %s to zone %s" % (source, zone))
-        elif desired_state == "disabled":
-            if is_enabled == True:
-                if module.check_mode:
-                    module.exit_json(changed=True)
-
-                action_handler(remove_source, (zone, source))
-                changed=True
-                msgs.append("Removed %s from zone %s" % (source, zone))
+        action_runner(
+            "source",
+            get_source, (zone, source),
+            get_source_permanent, (zone, source),
+            add_source, (zone, source),
+            add_source_permanent, (zone, source),
+            remove_source, (zone, source),
+            remove_source_permanent, (zone, source)
+        )
 
     if port != None:
-        if immediate and permanent:
-            is_enabled_permanent = action_handler(
-                get_port_enabled_permanent,
-                (zone,[port, protocol])
-            )
-            is_enabled_immediate = action_handler(
-                get_port_enabled,
-                (zone, [port, protocol])
-            )
-            msgs.append('Permanent and Non-Permanent(immediate) operation')
-
-            if desired_state == "enabled":
-                if not is_enabled_permanent or not is_enabled_immediate:
-                    if module.check_mode:
-                        module.exit_json(changed=True)
-                if not is_enabled_permanent:
-                    action_handler(
-                        set_port_enabled_permanent,
-                        (zone, port, protocol)
-                    )
-                    changed=True
-                if not is_enabled_immediate:
-                    action_handler(
-                        set_port_enabled,
-                        (zone, port, protocol, timeout)
-                    )
-                    changed=True
-
-            elif desired_state == "disabled":
-                if is_enabled_permanent or is_enabled_immediate:
-                    if module.check_mode:
-                        module.exit_json(changed=True)
-                if is_enabled_permanent:
-                    action_handler(
-                        set_port_disabled_permanent,
-                        (zone, port, protocol)
-                    )
-                    changed=True
-                if is_enabled_immediate:
-                    action_handler(
-                        set_port_disabled,
-                        (zone, port, protocol)
-                    )
-                    changed=True
-
-        elif permanent and not immediate:
-            is_enabled = action_handler(
-                get_port_enabled_permanent,
-                (zone, [port, protocol])
-            )
-            msgs.append('Permanent operation')
-
-            if desired_state == "enabled":
-                if is_enabled == False:
-                    if module.check_mode:
-                        module.exit_json(changed=True)
-
-                    action_handler(
-                        set_port_enabled_permanent,
-                        (zone, port, protocol)
-                    )
-                    changed=True
-            elif desired_state == "disabled":
-                if is_enabled == True:
-                    if module.check_mode:
-                        module.exit_json(changed=True)
-
-                    action_handler(
-                        set_port_disabled_permanent,
-                        (zone, port, protocol)
-                    )
-                    changed=True
-        if immediate and not permanent:
-            is_enabled = action_handler(
-                get_port_enabled,
-                (zone, [port,protocol])
-            )
-            msgs.append('Non-permanent operation')
-
-            if desired_state == "enabled":
-                if is_enabled == False:
-                    if module.check_mode:
-                        module.exit_json(changed=True)
-
-                    action_handler(
-                        set_port_enabled,
-                        (zone, port, protocol, timeout)
-                    )
-                    changed=True
-            elif desired_state == "disabled":
-                if is_enabled == True:
-                    if module.check_mode:
-                        module.exit_json(changed=True)
-
-                    action_handler(
-                        set_port_disabled,
-                        (zone, port, protocol)
-                    )
-                    changed=True
-
+        action_runner(
+            "port",
+            get_port_enabled, (zone, [port, protocol]),
+            get_port_enabled_permanent, (zone, [port, protocol]),
+            set_port_enabled, (zone, port, protocol, timeout),
+            set_port_enabled_permanent, (zone, port, protocol),
+            set_port_disabled, (zone, port, protocol),
+            set_port_disabled_permanent, (zone, port, protocol)
+        )
         if changed == True:
             msgs.append("Changed port %s to %s" % ("%s/%s" % (port, protocol), \
                         desired_state))
 
     if rich_rule != None:
-        if immediate and permanent:
-            is_enabled_permanent = action_handler(
-                get_rich_rule_enabled_permanent,
-                (zone, rich_rule)
-            )
-            is_enabled_immediate = action_handler(
-                get_rich_rule_enabled,
-                (zone, rich_rule)
-            )
-            msgs.append('Permanent and Non-Permanent(immediate) operation')
-
-            if desired_state == "enabled":
-                if not is_enabled_permanent or not is_enabled_immediate:
-                    if module.check_mode:
-                        module.exit_json(changed=True)
-                if not is_enabled_permanent:
-                    action_handler(
-                        set_rich_rule_enabled_permanent,
-                        (zone, rich_rule)
-                    )
-                    changed=True
-                if not is_enabled_immediate:
-                    action_handler(
-                        set_rich_rule_enabled,
-                        (zone, rich_rule, timeout)
-                    )
-                    changed=True
-
-            elif desired_state == "disabled":
-                if is_enabled_permanent or is_enabled_immediate:
-                    if module.check_mode:
-                        module.exit_json(changed=True)
-                if is_enabled_permanent:
-                    action_handler(
-                        set_rich_rule_disabled_permanent,
-                        (zone, rich_rule)
-                    )
-                    changed=True
-                if is_enabled_immediate:
-                    action_handler(
-                        set_rich_rule_disabled,
-                        (zone, rich_rule)
-                    )
-                    changed=True
-        if permanent and not immediate:
-            is_enabled = action_handler(
-                get_rich_rule_enabled_permanent,
-                (zone, rich_rule)
-            )
-            msgs.append('Permanent operation')
-
-            if desired_state == "enabled":
-                if is_enabled == False:
-                    if module.check_mode:
-                        module.exit_json(changed=True)
-
-                    action_handler(
-                        set_rich_rule_enabled_permanent,
-                        (zone, rich_rule)
-                    )
-                    changed=True
-            elif desired_state == "disabled":
-                if is_enabled == True:
-                    if module.check_mode:
-                        module.exit_json(changed=True)
-
-                    action_handler(
-                        set_rich_rule_disabled_permanent,
-                        (zone, rich_rule)
-                    )
-                    changed=True
-        if immediate and not permanent:
-            is_enabled = action_handler(
-                get_rich_rule_enabled,
-                (zone, rich_rule)
-            )
-            msgs.append('Non-permanent operation')
-
-            if desired_state == "enabled":
-                if is_enabled == False:
-                    if module.check_mode:
-                        module.exit_json(changed=True)
-
-                    action_handler(
-                        set_rich_rule_enabled,
-                        (zone, rich_rule, timeout)
-                    )
-                    changed=True
-            elif desired_state == "disabled":
-                if is_enabled == True:
-                    if module.check_mode:
-                        module.exit_json(changed=True)
-
-                    action_handler(
-                        set_rich_rule_disabled,
-                        (zone, rich_rule)
-                    )
-                    changed=True
-
+        action_runner(
+            "rich_rule",
+            get_rich_rule_enabled, (zone, rich_rule),
+            get_rich_rule_enabled_permanent, (zone, rich_rule),
+            set_rich_rule_enabled, (zone, rich_rule, timeout),
+            set_rich_rule_enabled_permanent, (zone, rich_rule),
+            set_rich_rule_disabled, (zone, rich_rule),
+            set_rich_rule_disabled_permanent, (zone, rich_rule)
+        )
         if changed == True:
             msgs.append("Changed rich_rule %s to %s" % (rich_rule, desired_state))
 
     if interface != None:
-        if immediate and permanent:
-            is_enabled_permanent = action_handler(
-                get_interface_permanent,
-                (zone, interface)
-            )
-            is_enabled_immediate = action_handler(
-                get_interface,
-                (zone, interface)
-            )
-            msgs.append('Permanent and Non-Permanent(immediate) operation')
-
-            if desired_state == "enabled":
-                if not is_enabled_permanent or not is_enabled_immediate:
-                    if module.check_mode:
-                        module.exit_json(changed=True)
-                if not is_enabled_permanent:
-                    change_zone_of_interface_permanent(zone, interface)
-                    changed=True
-                if not is_enabled_immediate:
-                    change_zone_of_interface(zone, interface)
-                    changed=True
-                if changed:
-                    msgs.append("Changed %s to zone %s" % (interface, zone))
-
-            elif desired_state == "disabled":
-                if is_enabled_permanent or is_enabled_immediate:
-                    if module.check_mode:
-                        module.exit_json(changed=True)
-                if is_enabled_permanent:
-                    remove_interface_permanent(zone, interface)
-                    changed=True
-                if is_enabled_immediate:
-                    remove_interface(zone, interface)
-                    changed=True
-                if changed:
-                    msgs.append("Removed %s from zone %s" % (interface, zone))
-
-        elif permanent and not immediate:
-            is_enabled = action_handler(
-                get_interface_permanent,
-                (zone, interface)
-            )
-            msgs.append('Permanent operation')
-            if desired_state == "enabled":
-                if is_enabled == False:
-                    if module.check_mode:
-                        module.exit_json(changed=True)
-
-                    change_zone_of_interface_permanent(zone, interface)
-                    changed=True
-                    msgs.append("Changed %s to zone %s" % (interface, zone))
-            elif desired_state == "disabled":
-                if is_enabled == True:
-                    if module.check_mode:
-                        module.exit_json(changed=True)
-
-                    remove_interface_permanent(zone, interface)
-                    changed=True
-                    msgs.append("Removed %s from zone %s" % (interface, zone))
-        elif immediate and not permanent:
-            is_enabled = action_handler(
-                get_interface,
-                (zone, interface)
-            )
-            msgs.append('Non-permanent operation')
-            if desired_state == "enabled":
-                if is_enabled == False:
-                    if module.check_mode:
-                        module.exit_json(changed=True)
-
-                    change_zone_of_interface(zone, interface)
-                    changed=True
-                    msgs.append("Changed %s to zone %s" % (interface, zone))
-            elif desired_state == "disabled":
-                if is_enabled == True:
-                    if module.check_mode:
-                        module.exit_json(changed=True)
-
-                    remove_interface(zone, interface)
-                    changed=True
-                    msgs.append("Removed %s from zone %s" % (interface, zone))
+        action_runner(
+            "interface",
+            get_interface, (zone, interface),
+            get_interface_permanent, (zone, interface),
+            change_zone_of_interface, (zone, interface),
+            change_zone_of_interface_permanent, (zone, interface),
+            remove_interface, (zone, interface),
+            remove_interface_permanent, (zone, interface)
+        )
 
     if masquerade != None:
-
-        if immediate and permanent:
-            is_enabled_permanent = action_handler(
-                get_masquerade_enabled_permanent,
-                (zone)
-            )
-            is_enabled_immediate = action_handler(get_masquerade_enabled, (zone))
-            msgs.append('Permanent and Non-Permanent(immediate) operation')
-
-            if desired_state == "enabled":
-                if not is_enabled_permanent or not is_enabled_immediate:
-                    if module.check_mode:
-                        module.exit_json(changed=True)
-                if not is_enabled_permanent:
-                    action_handler(set_masquerade_permanent, (zone, True))
-                    changed=True
-                if not is_enabled_immediate:
-                    action_handler(set_masquerade_enabled, (zone))
-                    changed=True
-                if changed:
-                    msgs.append("Added masquerade to zone %s" % (zone))
-
-            elif desired_state == "disabled":
-                if is_enabled_permanent or is_enabled_immediate:
-                    if module.check_mode:
-                        module.exit_json(changed=True)
-                if is_enabled_permanent:
-                    action_handler(set_masquerade_permanent, (zone, False))
-                    changed=True
-                if is_enabled_immediate:
-                    action_handler(set_masquerade_disabled, (zone))
-                    changed=True
-                if changed:
-                    msgs.append("Removed masquerade from zone %s" % (zone))
-
-        elif permanent and not immediate:
-            is_enabled = action_handler(get_masquerade_enabled_permanent, (zone))
-            msgs.append('Permanent operation')
-
-            if desired_state == "enabled":
-                if is_enabled == False:
-                    if module.check_mode:
-                        module.exit_json(changed=True)
-
-                    action_handler(set_masquerade_permanent, (zone, True))
-                    changed=True
-                    msgs.append("Added masquerade to zone %s" % (zone))
-            elif desired_state == "disabled":
-                if is_enabled == True:
-                    if module.check_mode:
-                        module.exit_json(changed=True)
-
-                    action_handler(set_masquerade_permanent, (zone, False))
-                    changed=True
-                    msgs.append("Removed masquerade from zone %s" % (zone))
-        elif immediate and not permanent:
-            is_enabled = action_handler(get_masquerade_enabled, (zone))
-            msgs.append('Non-permanent operation')
-
-            if desired_state == "enabled":
-                if is_enabled == False:
-                    if module.check_mode:
-                        module.exit_json(changed=True)
-
-                    action_handler(set_masquerade_enabled, (zone))
-                    changed=True
-                    msgs.append("Added masquerade to zone %s" % (zone))
-            elif desired_state == "disabled":
-                if is_enabled == True:
-                    if module.check_mode:
-                        module.exit_json(changed=True)
-
-                    action_handler(set_masquerade_disabled, (zone))
-                    changed=True
-                    msgs.append("Removed masquerade from zone %s" % (zone))
+        action_runner(
+            "masquerade",
+            get_masquerade_enabled, (zone),
+            get_masquerade_enabled_permanent, (zone),
+            set_masquerade_enabled, (zone),
+            set_masquerade_permanent, (zone, True),
+            set_masquerade_disabled, (zone),
+            set_masquerade_permanent, (zone, False)
+        )
 
     if fw_offline:
-        msgs.append("(offline operation: only on-disk configs were altered)")
+        msgs.append("(offline operation: only on-disk configs affected)")
     module.exit_json(changed=changed, msg=', '.join(msgs))
 
 

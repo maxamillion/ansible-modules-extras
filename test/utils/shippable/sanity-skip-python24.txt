@@ -10,6 +10,7 @@
 /packaging/os/dnf.py
 /packaging/os/layman.py
 /remote_management/ipmi/
+/system/firewalld.py
 /univention/
 /web_infrastructure/letsencrypt.py
 /infrastructure/foreman/
